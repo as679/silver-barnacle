@@ -1,0 +1,241 @@
+---
+#
+# TODO
+# ====
+# - correctly report changed status
+# - implement uri instead of curl for image transfer
+#
+- name: Avi Controller | oVirt | Template deploy | Authenticate the API session
+  uri:
+    url: "https://{{ inventory_hostname }}/ovirt-engine/sso/oauth/token"
+    headers:
+      Accept: application/json
+    body:
+      grant_type: password
+      scope: ovirt-app-api
+      username: "{{ con_ovirt_user }}"
+      password: "{{ con_ovirt_pass }}"
+    body_format: form-urlencoded
+    validate_certs: false
+  register: con_ovirt_api
+  failed_when: "con_ovirt_api.status|int != 200"
+  delegate_to: localhost
+- name: Avi Controller | oVirt | Template deploy | GET the available templates
+  uri:
+    url: "https://{{ inventory_hostname }}/ovirt-engine/api/templates?case_sensitive=true&max=1&search=name={{ template.name }}"
+    headers:
+      Version: 4
+      Accept: application/json
+      Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+    validate_certs: false
+  register: con_ovirt_template
+  failed_when: "con_ovirt_template.status|int != 200"
+  delegate_to: localhost
+
+- block:
+    - name: Avi Controller | oVirt | Template deploy | Get the existing template details
+      debug:
+        var=con_ovirt_template.json.template[0]
+  when: con_ovirt_template.json.template is defined
+
+- block:
+    - name: Avi Controller | oVirt | Template deploy | Create a temporary VM | Create a temporary name
+      shell: |
+        cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16
+      register: con_temporary_vm_name
+      delegate_to: localhost
+      changed_when: false
+    - name: Avi Controller | oVirt | Template deploy | Create the temporary VM | Lookup the request body
+      set_fact:
+        con_vm_template_json: "{{ lookup('template', 'vm_template.json.j2', convert_data=False) }}"
+    - name: Avi Controller | oVirt | Template deploy | Create the temporary VM | Create the instance
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms"
+        headers:
+          Version: 4
+          Accept: application/json
+          Content-type: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_vm_template_json }}"
+        validate_certs: false
+      register: con_ovirt_temporary_vm
+      failed_when: "con_ovirt_temporary_vm.status|int != 201"
+      delegate_to: localhost
+
+    - name: Avi Controller | oVirt | Template deploy | Connect the temporary VM NIC | Lookup the existing vnic profiles
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/vnicprofiles"
+        headers:
+          Version: 4
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        validate_certs: false
+      register: con_ovirt_vnicprofile
+      failed_when: "con_ovirt_vnicprofile.status|int != 200"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Connect the temporary VM NIC | Lookup the request body
+      set_fact:
+        con_nic_template_json: "{{ lookup('template', 'nic_template.json.j2', convert_data=False) }}"
+      when: vnicprofile.name == template.network
+      with_items: "{{ con_ovirt_vnicprofile.json.vnic_profile }}"
+      loop_control:
+        loop_var: vnicprofile
+    - name: Avi Controller | oVirt | Template deploy | Connect the temporary VM NIC | Create the nic
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms/{{ con_ovirt_temporary_vm.json.id }}/nics"
+        headers:
+          Version: 4
+          Accept: application/json
+          Content-type: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_nic_template_json }}"
+        validate_certs: false
+      register: con_ovirt_temporary_vm_nic
+      failed_when: "con_ovirt_temporary_vm_nic.status|int != 201"
+      delegate_to: localhost
+
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Stat the qcow2
+      stat:
+        path: "{{ template.qcow2 }}"
+        get_checksum: no
+      register: qcow2_stat
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | qemu-ing info
+      shell: "qemu-img info {{ template.qcow2 }} | grep 'bytes' | tr -d '()' | cut -d' ' -f4"
+      register: qcow2_info
+      delegate_to: localhost
+      changed_when: false
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Lookup the storage domains
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/storagedomains?case_sensitive=true&max=1&search=name={{ template.storage_domain }}"
+        headers:
+          Version: 4
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        validate_certs: false
+      register: con_ovirt_storage_domain
+      failed_when: "con_ovirt_storage_domain.status|int != 200"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Lookup the request body
+      set_fact:
+        con_qcow2_template_json: "{{ lookup('template', 'qcow2_template.json.j2', convert_data=False) }}"
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | create the new disk
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/disks"
+        headers:
+          Version: 4
+          Accept: application/json
+          Content-type: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_qcow2_template_json }}"
+        validate_certs: false
+      register: con_ovirt_temporary_vm_disk
+      failed_when: "con_ovirt_temporary_vm_disk.status|int != 201"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Lookup the image transfer request body
+      set_fact:
+        con_image_transfer_template_json: "{{ lookup('template', 'image_transfer_template.json.j2', convert_data=False) }}"
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | initiate the image transfer
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/imagetransfers"
+        headers:
+          Version: 4
+          Accept: application/json
+          Content-type: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_image_transfer_template_json }}"
+        validate_certs: false
+      register: con_ovirt_image_transfer
+      failed_when: "con_ovirt_image_transfer.status|int != 201"
+      delegate_to: localhost
+      until: "con_ovirt_image_transfer.status|int != 409"
+      retries: 10
+      delay: 10
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Upload the new image
+      shell: "curl --cacert /etc/pki/ovirt-engine/ca.pem --upload-file {{ template.qcow2 }} -X PUT {{ con_ovirt_image_transfer.json.transfer_url }}"
+#      uri:
+#        url: "{{ con_ovirt_image_transfer.json.transfer_url }}"
+#        method: PUT
+#        src: "{{ template.qcow2 }}"
+#        validate_certs: false
+#      register: con_ovirt_image_transfer_upload
+#      failed_when: "con_ovirt_image_transfer_upload.status|int != 201"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Finalize the image transfer
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/imagetransfers/{{ con_ovirt_image_transfer.json.id }}/finalize"
+        headers:
+          Version: 4
+          Content-type: application/xml
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: raw
+        body: <action />
+        validate_certs: false
+      register: con_ovirt_image_transfer_upload
+      failed_when: "con_ovirt_image_transfer_upload.status|int != 200"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Lookup the attachment request body
+      set_fact:
+        con_disk_attach_template_json: "{{ lookup('template', 'disk_attach_template.json.j2', convert_data=False) }}"
+    - name: Avi Controller | oVirt | Template deploy | Upload the template disk | Attach the new disk
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms/{{ con_ovirt_temporary_vm.json.id }}/diskattachments"
+        headers:
+          Version: 4
+          Content-type: application/json
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_disk_attach_template_json }}"
+        validate_certs: false
+      register: con_ovirt_disk_attach
+      failed_when: "con_ovirt_disk_attach.status|int != 201"
+      delegate_to: localhost
+      until: "con_ovirt_disk_attach.status|int != 409"
+      retries: 10
+      delay: 10
+    - name: Avi Controller | oVirt | Template deploy | Create the template | Lookup the request body
+      set_fact:
+        con_template_json: "{{ lookup('template', 'template.json.j2', convert_data=False) }}"
+    - name: Avi Controller | oVirt | Template deploy | Create the template | Initiate template creation
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/templates"
+        headers:
+          Version: 4
+          Content-type: application/json
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: POST
+        body_format: json
+        body: "{{ con_template_json }}"
+        validate_certs: false
+      register: con_ovirt_new_template
+      failed_when: "con_ovirt_new_template.status|int != 201"
+      delegate_to: localhost
+    - name: Avi Controller | oVirt | Template deploy | Remove the temporary VM
+      uri:
+        url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms/{{ con_ovirt_temporary_vm.json.id }}"
+        headers:
+          Version: 4
+          Accept: application/json
+          Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+        method: DELETE
+        validate_certs: false
+      register: con_ovirt_vm
+      failed_when: "con_ovirt_vm.status|int != 200"
+      delegate_to: localhost
+      until: "con_ovirt_vm.status|int != 409"
+      retries: 15
+      delay: 60
+  when: con_ovirt_template.json.template is not defined

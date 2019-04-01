@@ -1,0 +1,95 @@
+---
+- name: Avi Controller | oVirt | Metadata deploy | Find if the metadata ISO already exists
+  set_fact:
+    con_metadata_found: "{{ disk_iso }}"
+  when: disk_iso.name == "{{ controller.metadata_name }}"
+  with_items: "{{ con_ovirt_disks_iso.json.disk }}"
+  loop_control:
+    loop_var: disk_iso
+- block:
+  - name: Avi Controller | oVirt | Metadata deploy | Create the metadata YAML
+    template:
+      src: avi_meta.yml.j2
+      dest: "{{ tmp_dir.path }}/avi_meta_{{ controller.name }}.yml"
+    delegate_to: localhost
+  - name: Avi Controller | oVirt | Metadata deploy | Create the metadata ISO
+    shell: genisoimage -o "{{ tmp_dir.path }}/{{ controller.metadata_name }}" "{{ tmp_dir.path }}/avi_meta_{{ controller.name }}.yml"
+    args:
+      creates: "{{ tmp_dir.path }}/{{ controller.metadata_name }}"
+    delegate_to: localhost
+  - name: Avi Controller | Metadata deploy | Stat the ISO
+    stat:
+      path: "{{ tmp_dir.path }}/{{ controller.metadata_name }}"
+      get_checksum: no
+    register: iso_stat
+    delegate_to: localhost
+  - name: Avi Controller | oVirt | Metadata deploy | Lookup the request body
+    set_fact:
+      con_iso_template_json: "{{ lookup('template', 'iso_template.json.j2', convert_data=False) }}"
+  - name: Avi Controller | oVirt | Metadata deploy | Create the new ISO
+    uri:
+      url: "https://{{ inventory_hostname }}/ovirt-engine/api/disks"
+      headers:
+        Version: 4
+        Accept: application/json
+        Content-type: application/json
+        Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+      method: POST
+      body_format: json
+      body: "{{ con_iso_template_json }}"
+      validate_certs: false
+    register: con_ovirt_metadata_iso
+    failed_when: "con_ovirt_metadata_iso.status|int != 201"
+    delegate_to: localhost
+  - name: Avi Controller | oVirt | Metadata deploy | Lookup the ISO transfer request body
+    set_fact:
+      con_iso_transfer_template_json: "{{ lookup('template', 'iso_transfer_template.json.j2', convert_data=False) }}"
+  - name: Avi Controller | oVirt | Metadata deploy | initiate the ISO transfer
+    uri:
+      url: "https://{{ inventory_hostname }}/ovirt-engine/api/imagetransfers"
+      headers:
+        Version: 4
+        Accept: application/json
+        Content-type: application/json
+        Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+      method: POST
+      body_format: json
+      body: "{{ con_iso_transfer_template_json }}"
+      validate_certs: false
+    register: con_ovirt_iso_transfer
+    failed_when: "con_ovirt_iso_transfer.status|int != 201"
+    delegate_to: localhost
+    until: "con_ovirt_iso_transfer.status|int != 409"
+    retries: 10
+    delay: 10
+  - name: Avi Controller | oVirt | Metadata deploy | Upload the new ISO
+    shell: "curl --cacert /etc/pki/ovirt-engine/ca.pem --upload-file {{ tmp_dir.path }}/{{ controller.metadata_name }} -X PUT {{ con_ovirt_iso_transfer.json.transfer_url }}"
+    delegate_to: localhost
+  - name: Avi Controller | oVirt | Metadata deploy | Finalize the ISO transfer
+    uri:
+      url: "https://{{ inventory_hostname }}/ovirt-engine/api/imagetransfers/{{ con_ovirt_iso_transfer.json.id }}/finalize"
+      headers:
+        Version: 4
+        Content-type: application/xml
+        Accept: application/json
+        Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+      method: POST
+      body_format: raw
+      body: <action />
+      validate_certs: false
+    register: con_ovirt_iso_transfer_upload
+    failed_when: "con_ovirt_iso_transfer_upload.status|int != 200"
+    delegate_to: localhost
+  - name: Avi Controller | oVirt | Metadata deploy | Record the ISO information
+    set_fact:
+      controller_update: "{{ controller | combine({'metadata_id': con_ovirt_metadata_iso.json.id}) }}"
+  - set_fact:
+      controllers_update_metadata: "{{ controllers_update_metadata|default([]) + [ controller_update ] }}"
+  when: con_metadata_found is not defined
+- block:
+  - name: Avi Controller | oVirt | Metadata deploy | Record the ISO information
+    set_fact:
+      controller_update: "{{ controller | combine({'metadata_id': con_metadata_found.id}) }}"
+  - set_fact:
+      controllers_update_metadata: "{{ controllers_update_metadata|default([]) + [ controller_update ] }}"
+  when: con_metadata_found is defined

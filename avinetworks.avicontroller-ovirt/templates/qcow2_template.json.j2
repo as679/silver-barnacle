@@ -1,0 +1,9 @@
+{
+  "storage_domains": {"storage_domain": [{ "id": "{{ con_ovirt_storage_domain.json.storage_domain[0].id }}" }]},
+  "alias": "{{ template.qcow2 }}",
+  "initial_size": "{{ qcow2_stat.stat.size }}",
+  "provisioned_size": "{{ qcow2_info.stdout }}",
+  "format": "cow",
+  "description": "{{ template.description }}"
+}
+

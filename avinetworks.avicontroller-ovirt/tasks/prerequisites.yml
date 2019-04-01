@@ -1,0 +1,16 @@
+---
+#
+# TODO
+# ====
+# - Is is possible to only gather facts for localhost..?
+#
+- name: Avi Controller | oVirt | Prerequisites | Install packages
+  yum:
+    name: "{{ item }}"
+    state: latest
+  with_items:
+     - qemu-img
+     - genisoimage
+  delegate_to: localhost
+#  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+

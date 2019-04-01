@@ -1,0 +1,19 @@
+---
+- name: Avi Controller | oVirt | Instance create | GET the defined instances 
+  uri:
+    url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms"
+    headers:
+      Version: 4
+      Accept: application/json
+      Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+    validate_certs: false
+  register: con_ovirt_instances
+  failed_when: "con_ovirt_instances.status|int != 200"
+  delegate_to: localhost
+
+- name: Avi Controller | oVirt | Instance create | Include the instance create loop
+  include: instance_create_loop.yml
+  with_items: "{{ controllers }}"
+  loop_control:
+    loop_var: controller
+

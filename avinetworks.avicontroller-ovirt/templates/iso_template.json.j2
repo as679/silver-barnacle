@@ -1,0 +1,10 @@
+{
+  "storage_domains": {"storage_domain": [{ "id": "{{ iso_storage_domain_upload.id }}" }]},
+  "alias": "{{ controller.name }}_metadata.iso",
+  "initial_size": "{{ iso_stat.stat.size }}",
+  "provisioned_size": "{{ iso_stat.stat.size }}",
+  "format": "raw",
+  "sparse": "false",
+  "content_type": "iso"
+}
+

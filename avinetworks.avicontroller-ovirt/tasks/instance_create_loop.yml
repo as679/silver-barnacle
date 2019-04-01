@@ -1,0 +1,67 @@
+---
+- name: Avi Controller | oVirt | Instance create | Lookup the instance template 
+  set_fact:
+    con_instance_template_json: "{{ lookup('template', 'instance_template.json.j2', convert_data=False) }}"
+- name: Avi Controller | oVirt | Instance create | Create the instance VM
+  uri:
+    url: "https://{{ inventory_hostname }}/ovirt-engine/api/vms?clone=true"
+    headers:
+      Version: 4
+      Accept: application/json
+      Content-type: application/json
+      Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+    method: POST
+    body_format: json
+    body: "{{ con_instance_template_json }}"
+    validate_certs: false
+  register: con_ovirt_instance
+  failed_when: "con_ovirt_instance.status|int != 201"
+  delegate_to: localhost
+- name: Avi Controller | oVirt | Instance create | Lookup the attach cdrom template 
+  set_fact:
+    metadata_iso_id: "metadata_iso_ids.{{ controller.metadata_name }}"
+- name: Avi Controller | oVirt | Instance create | Lookup the attach cdrom template 
+  set_fact:
+    con_cdrom_attach_template_xml: "{{ lookup('template', 'cdrom_attach_template.xml.j2', convert_data=False) }}"
+- name: Avi Controller | oVirt | Instance create | Attach the metadata cdrom
+  uri:
+    url: "https://{{ inventory_hostname }}{{ item.href }}/00000000-0000-0000-0000-000000000000?current=false"
+    headers:
+      Version: 4
+      Accept: application/json
+      Content-type: application/xml
+      Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+    method: PUT
+    body_format: raw
+    body: "{{ con_cdrom_attach_template_xml }}"
+    validate_certs: false
+  register: con_ovirt_instance_attach_cdrom
+  failed_when: "con_ovirt_instance_attach_cdrom.status|int != 200"
+  delegate_to: localhost
+  when: item.rel == "cdroms"
+  with_items: "{{ con_ovirt_instance.json.link }}"
+  until: "con_ovirt_instance_attach_cdrom.status|int != 409"
+  retries: 10
+  delay: 10
+- name: Avi Controller | oVirt | Instance create | Start the instance 
+  uri:
+    url: "https://{{ inventory_hostname }}{{ item.href }}"
+    headers:
+      Version: 4
+      Accept: application/json
+      Content-type: application/xml
+      Authorization: "Bearer {{ con_ovirt_api.json.access_token}}"
+    method: POST
+    body_format: raw
+    body: <action/>
+    validate_certs: false
+  register: con_ovirt_instance_start
+  failed_when: "con_ovirt_instance_start.status|int != 200"
+  delegate_to: localhost
+  when: item.rel == "start"
+  with_items: "{{ con_ovirt_instance.json.actions.link }}"
+  until: "con_ovirt_instance_start.status|int != 409"
+  retries: 10
+  delay: 10
+
+

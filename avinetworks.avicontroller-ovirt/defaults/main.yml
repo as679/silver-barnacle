@@ -1,0 +1,5 @@
+---
+# defaults file for avinetworks.avicontroller-ovirt
+clean_up: true
+tmp_prefix: avi_meta_
+tmp_suffix: _out

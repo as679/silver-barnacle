@@ -1,0 +1,10 @@
+{
+  "name": "{{ con_temporary_vm_name.stdout }}",
+  "type": "server",
+  "os": { "type": "other_linux" },
+  "memory": "{{ (template.memory*1024*1024*1024)|int }}",
+  "cpu": { "topology": { "cores": "{{ template.cpu }}" }},
+  "template": { "name": "Blank" },
+  "cluster": { "name": "{{ template.cluster }}"},
+  "description": "{{ template.description }}"
+}

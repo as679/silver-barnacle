@@ -1,0 +1,25 @@
+---
+# tasks file for avinetworks.avicontroller-ovirt
+- name: Avi Controller | oVirt | Main | Build out the metadata names 
+  set_fact:
+    controllers_update: "{{ controllers_update|default([]) + [ item | combine({ 'metadata_name':  item.name + '_metadata.iso' }) ] }}"
+  with_items: "{{ controllers }}"
+- name: Avi Controller | oVirt | Main | Build out the metadata names 
+  set_fact:
+    controllers: "{{ controllers_update }}"
+
+#- name: Avi Controller | oVirt | Main | Prerequisites
+#  include: prerequisites.yml
+
+- name: Avi Controller | oVirt | Main | Template deployment
+  include_tasks: template_deploy.yml
+
+- name: Avi Controller | oVirt | Main | Metadata deployment
+  include_tasks: metadata_deploy.yml
+
+- name: Avi Controller | oVirt | Main | Build out the metadata IDs 
+  set_fact:
+    controllers: "{{ controllers_update_metadata }}"
+
+- name: Avi Controller | oVirt | Main | Controller instance creation
+  include_tasks: instance_create.yml
